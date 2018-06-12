@@ -11,6 +11,44 @@ final class ClientConnectContext {
     private $maxAttempts = 2;
     private $typeRestriction = null;
     private $tcpNoDelay = false;
+    private $uriConcurrencyLimit = [];
+    private $defaultUriConcurrencyLimit = null;
+
+    public function withUriConcurrencyLimit(string $uri, int $maxConnections): self {
+        if ($maxConnections <= 0) {
+            throw new \Error("Invalid URI concurrency limit ({$maxConnections}), must be greater than 0");
+        }
+
+        $clone = clone $this;
+        $clone->uriConcurrencyLimit[$uri] = $maxConnections;
+
+        return $clone;
+    }
+
+    public function getUriConcurrencyLimit(string $uri, bool $useDefault = false) {
+        if (isset($this->uriConcurrencyLimit[$uri])) {
+            return $this->uriConcurrencyLimit[$uri];
+        }
+
+        return $useDefault
+            ? $this->defaultUriConcurrencyLimit
+            : null;
+    }
+
+    public function withDefaultUriConcurrencyLimit(int $maxConnections): self {
+        if ($maxConnections <= 0) {
+            throw new \Error("Invalid URI concurrency limit ({$maxConnections}), must be greater than 0");
+        }
+
+        $clone = clone $this;
+        $clone->defaultUriConcurrencyLimit = $maxConnections;
+
+        return $clone;
+    }
+
+    public function getDefaultUriConcurrencyLimit(string $uri) {
+        return $this->bindTo;
+    }
 
     public function withBindTo(string $bindTo = null): self {
         $bindTo = normalizeBindToOption($bindTo);

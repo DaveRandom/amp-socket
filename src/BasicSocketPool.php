@@ -4,6 +4,7 @@ namespace Amp\Socket;
 
 use Amp\CancellationToken;
 use Amp\CancelledException;
+use Amp\Deferred;
 use Amp\Failure;
 use Amp\Loop;
 use Amp\Promise;
@@ -16,6 +17,7 @@ final class BasicSocketPool implements SocketPool {
     private $sockets = [];
     private $socketIdUriMap = [];
     private $pendingCount = [];
+    private $awaitingIdleQueue = [];
 
     private $idleTimeout;
     private $socketContext;
@@ -31,6 +33,14 @@ final class BasicSocketPool implements SocketPool {
         }
 
         return (new Uri($uri))->normalize();
+    }
+
+    private function canCreateNewSocketForUri(string $uri)
+    {
+        $concurrencyLimit = $this->socketContext->getUriConcurrencyLimit($uri);
+
+        return $concurrencyLimit === null
+            || \count($this->sockets[$uri]) < $concurrencyLimit;
     }
 
     /** @inheritdoc */
@@ -68,7 +78,24 @@ final class BasicSocketPool implements SocketPool {
             return new Success(new ClientSocket($socket->resource));
         }
 
-        return $this->checkoutNewSocket($uri, $token);
+        return $this->canCreateNewSocketForUri($uri)
+            ? $this->checkoutNewSocket($uri, $token)
+            : $this->awaitIdleSocket($uri, $token);
+    }
+
+    private function awaitIdleSocket(string $uri, CancellationToken $token = null)
+    {
+        $def = new Deferred;
+
+        if ($token) {
+            $token->subscribe(function() use($def) {
+                $def->fail(new CancelledException);
+            });
+        }
+
+        $this->awaitingIdleQueue[$uri][] = [$def, $token];
+
+        return $def->promise();
     }
 
     private function checkoutNewSocket(string $uri, CancellationToken $token = null): Promise {
@@ -153,6 +180,20 @@ final class BasicSocketPool implements SocketPool {
         }
 
         $socket = $this->sockets[$uri][$socketId];
+
+        while (!empty($this->awaitingIdleQueue[$uri])) {
+            /** @var Deferred $deferred */
+            /** @var CancellationToken $token */
+            list($deferred, $token) = \array_shift($this->awaitingIdleQueue[$uri]);
+
+            if ($token->isRequested()) {
+                continue;
+            }
+
+            $deferred->resolve(new ClientSocket($socket->resource));
+            return;
+        }
+
         $socket->isAvailable = true;
 
         if (isset($socket->idleWatcher)) {
