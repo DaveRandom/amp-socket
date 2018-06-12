@@ -88,8 +88,8 @@ final class BasicSocketPool implements SocketPool {
         $def = new Deferred;
 
         if ($token) {
-            $token->subscribe(function() use($def) {
-                $def->fail(new CancelledException);
+            $token->subscribe(function($e) use($def) {
+                $def->fail($e);
             });
         }
 
